@@ -77,7 +77,7 @@ extension TrustedRouter {
             throw TrustedRouterError.generic(statusCode: response.statusCode, message: "Error in stream response", payload: nil)
         }
         
-        return iterSseEvents(response: response, bytes: bytes, type: ChatCompletionChunk.self)
+        return iterSseEvents(bytes: bytes, type: ChatCompletionChunk.self)
     }
 
     /** Simple helper to yield only the text deltas from a chat completion stream. */
@@ -185,7 +185,7 @@ extension TrustedRouter {
             throw TrustedRouterError.generic(statusCode: response.statusCode, message: "Error in stream response", payload: nil)
         }
         
-        return iterSseEvents(response: response, bytes: bytes)
+        return iterSseEvents(bytes: bytes)
     }
     
     public func responsesInputTokens(

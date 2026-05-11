@@ -90,15 +90,8 @@ final class TrustedRouterEndpointTests: XCTestCase {
             
             // Gateway always streams, so we mock SSE data
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "text/event-stream"])!
-            let sseData = """
-            data: {"id": "test-chat", "object": "chat.completion.chunk", "choices": [{"index": 0, "delta": {"role": "assistant", "content": "Hello"}, "finish_reason": null}]}
-            
-            data: {"id": "test-chat", "object": "chat.completion.chunk", "choices": [{"index": 0, "delta": {"content": " world"}, "finish_reason": "stop"}]}
-            
-            data: [DONE]
-            
-            """.data(using: .utf8)!
-            return (response, sseData)
+            let sseData = "data: {\"id\": \"test-chat\", \"object\": \"chat.completion.chunk\", \"choices\": [{\"index\": 0, \"delta\": {\"role\": \"assistant\", \"content\": \"Hello\"}, \"finish_reason\": null}]}\n\ndata: {\"id\": \"test-chat\", \"object\": \"chat.completion.chunk\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \" world\"}, \"finish_reason\": \"stop\"}]}\n\n"
+            return (response, sseData.data(using: .utf8)!)
         }
 
         let result = try await router.chatCompletions(messages: [["role": "user", "content": "Hi"]])

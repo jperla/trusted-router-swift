@@ -10,24 +10,78 @@ public struct SSEEvent: Sendable {
 }
 
 @available(macOS 12.0, iOS 15.0, tvOS 15.0, watchOS 8.0, *)
-public func iterSseEvents<T: Decodable>(response: HTTPURLResponse, bytes: URLSession.AsyncBytes, type: T.Type) -> AsyncThrowingStream<T, Error> {
-    return AsyncThrowingStream { continuation in
-        Task {
-            do {
-                let decoder = JSONDecoder()
-                for try await line in bytes.lines {
-                    if line.hasPrefix("data:") {
-                        let dataStr = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)
-                        if !dataStr.isEmpty && dataStr != "[DONE]" {
-                            if let data = dataStr.data(using: .utf8) {
-                                do {
-                                    let model = try decoder.decode(T.self, from: data)
-                                    continuation.yield(model)
-                                } catch {
-                                    // Skip decoding errors for now or yield them
+public enum SSEParser {
+    
+    /// Low-level stream of raw SSE events from AsyncBytes.
+    public static func stream(from bytes: URLSession.AsyncBytes) -> AsyncThrowingStream<SSEEvent, Error> {
+        return AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    // Use a buffer approach to handle \n\n correctly
+                    var buffer = ""
+                    for try await byte in bytes {
+                        if let char = String(bytes: [byte], encoding: .utf8) {
+                            buffer += char
+                            if buffer.hasSuffix("\n\n") || buffer.hasSuffix("\r\n\r\n") {
+                                // Frame boundary reached
+                                let frame = buffer
+                                buffer = ""
+                                if let event = parseFrame(frame) {
+                                    continuation.yield(event)
                                 }
                             }
                         }
+                    }
+                    
+                    // Final frame
+                    if !buffer.isEmpty {
+                        if let event = parseFrame(buffer) {
+                            continuation.yield(event)
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
+    
+    private static func parseFrame(_ frame: String) -> SSEEvent? {
+        var currentEvent: String? = nil
+        var dataParts: [String] = []
+        
+        let lines = frame.components(separatedBy: .newlines)
+        for line in lines {
+            if line.hasPrefix("event:") {
+                currentEvent = line.dropFirst(6).trimmingCharacters(in: .whitespaces)
+            } else if line.hasPrefix("data:") {
+                dataParts.append(line.dropFirst(5).trimmingCharacters(in: .whitespaces))
+            }
+        }
+        
+        if dataParts.isEmpty { return nil }
+        return SSEEvent(event: currentEvent, data: dataParts.joined(separator: "\n"))
+    }
+}
+
+@available(macOS 12.0, iOS 15.0, tvOS 15.0, watchOS 8.0, *)
+public func iterSseEvents<T: Decodable>(bytes: URLSession.AsyncBytes, type: T.Type) -> AsyncThrowingStream<T, Error> {
+    let decoder = JSONDecoder()
+    let rawStream = SSEParser.stream(from: bytes)
+    
+    return AsyncThrowingStream { continuation in
+        Task {
+            do {
+                for try await event in rawStream {
+                    let trimmedData = event.data.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if trimmedData == "[DONE]" { break }
+                    guard let data = trimmedData.data(using: .utf8) else { continue }
+                    do {
+                        let model = try decoder.decode(T.self, from: data)
+                        continuation.yield(model)
+                    } catch {
+                        // Skip non-matching chunks
                     }
                 }
                 continuation.finish()
@@ -39,34 +93,26 @@ public func iterSseEvents<T: Decodable>(response: HTTPURLResponse, bytes: URLSes
 }
 
 @available(macOS 12.0, iOS 15.0, tvOS 15.0, watchOS 8.0, *)
-public func iterSseEvents(response: HTTPURLResponse, bytes: URLSession.AsyncBytes) -> AsyncThrowingStream<[String: Any], Error> {
+public func iterSseEvents(bytes: URLSession.AsyncBytes) -> AsyncThrowingStream<[String: Any], Error> {
+    let rawStream = SSEParser.stream(from: bytes)
+    
     return AsyncThrowingStream { continuation in
         Task {
             do {
-                var currentEvent: String? = nil
-                for try await line in bytes.lines {
-                    if line.hasPrefix("event:") {
-                        currentEvent = String(line.dropFirst(6)).trimmingCharacters(in: .whitespaces)
-                    } else if line.hasPrefix("data:") {
-                        let dataStr = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)
-                        if !dataStr.isEmpty && dataStr != "[DONE]" {
-                            if let data = dataStr.data(using: .utf8),
-                               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                                var payload = json
-                                if let event = currentEvent, payload["event"] == nil {
-                                    payload["event"] = event
-                                }
-                                continuation.yield(payload)
-                            } else {
-                                var payload: [String: Any] = ["data": dataStr]
-                                if let event = currentEvent {
-                                    payload["event"] = event
-                                }
-                                continuation.yield(payload)
-                            }
+                for try await event in rawStream {
+                    let trimmedData = event.data.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if trimmedData == "[DONE]" { break }
+                    guard let data = trimmedData.data(using: .utf8) else { continue }
+                    if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        var payload = json
+                        if let eventName = event.event, payload["event"] == nil {
+                            payload["event"] = eventName
                         }
-                    } else if line.isEmpty {
-                        currentEvent = nil
+                        continuation.yield(payload)
+                    } else {
+                        var payload: [String: Any] = ["data": event.data]
+                        if let eventName = event.event { payload["event"] = eventName }
+                        continuation.yield(payload)
                     }
                 }
                 continuation.finish()

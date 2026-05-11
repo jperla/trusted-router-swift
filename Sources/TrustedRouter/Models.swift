@@ -150,8 +150,6 @@ public struct ResponseObject: Codable, Sendable {
     public var createdAt: Int?
     public var status: String?
     public var model: String?
-    // output and usage can be complex, using [String: AnyCodable] would be better
-    // but for now we'll use optional properties or raw dicts if needed.
     
     enum CodingKeys: String, CodingKey {
         case id, object, status, model
@@ -208,7 +206,7 @@ public struct ActivityResponse: Codable, Sendable {
         public var id: String
         public var createdAt: Int?
         public var type: String?
-        public var metadata: [String: String]? // Simplified for now
+        public var metadata: [String: String]?
         
         enum CodingKeys: String, CodingKey {
             case id, type, metadata
@@ -216,4 +214,3 @@ public struct ActivityResponse: Codable, Sendable {
         }
     }
 }
-
