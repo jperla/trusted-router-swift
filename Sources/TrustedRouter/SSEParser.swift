@@ -17,25 +17,31 @@ public enum SSEParser {
         return AsyncThrowingStream { continuation in
             Task {
                 do {
-                    // Use a buffer approach to handle \n\n correctly
-                    var buffer = ""
+                    var buffer = Data()
                     for try await byte in bytes {
-                        if let char = String(bytes: [byte], encoding: .utf8) {
-                            buffer += char
-                            if buffer.hasSuffix("\n\n") || buffer.hasSuffix("\r\n\r\n") {
-                                // Frame boundary reached
-                                let frame = buffer
-                                buffer = ""
+                        buffer.append(byte)
+                        
+                        // Check for frame boundary: \n\n (10, 10) or \r\n\r\n (13, 10, 13, 10)
+                        if buffer.count >= 2 && buffer.suffix(2) == Data([10, 10]) {
+                            if let frame = String(data: buffer, encoding: .utf8) {
                                 if let event = parseFrame(frame) {
                                     continuation.yield(event)
                                 }
                             }
+                            buffer.removeAll(keepingCapacity: true)
+                        } else if buffer.count >= 4 && buffer.suffix(4) == Data([13, 10, 13, 10]) {
+                            if let frame = String(data: buffer, encoding: .utf8) {
+                                if let event = parseFrame(frame) {
+                                    continuation.yield(event)
+                                }
+                            }
+                            buffer.removeAll(keepingCapacity: true)
                         }
                     }
                     
-                    // Final frame
                     if !buffer.isEmpty {
-                        if let event = parseFrame(buffer) {
+                        if let frame = String(data: buffer, encoding: .utf8),
+                           let event = parseFrame(frame) {
                             continuation.yield(event)
                         }
                     }

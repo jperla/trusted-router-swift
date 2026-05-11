@@ -243,26 +243,39 @@ public func verifyGatewayAttestation(
         throw AttestationVerificationError("invalid JWK RSA parameters")
     }
     
-    // Construct public key from n and e. Security framework requires a specific DER format.
-    // For simplicity in this example, we assume we have a helper or we use a more direct way.
-    // Real-world use would use a small DER helper to wrap (n, e).
-    // Let's assume we use a basic SecKey approach if we have the DER, but creating it from (n, e) is non-trivial.
-    // To be robust but within line limits, we'll use a placeholder for the actual n/e -> SecKey conversion
-    // but the call structure is correct.
-    
-    /* 
-    let attributes: [String: Any] = [
-        kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
-        kSecAttrKeyClass as String: kSecAttrKeyClassPublic,
-    ]
-    var error: Unmanaged<CFError>?
-    guard let publicKey = SecKeyCreateWithData(derData as CFData, attributes as CFDictionary, &error) else {
-        throw AttestationVerificationError("Failed to create public key: \(error!.takeRetainedValue())")
+    func derEncodeInteger(_ data: Data) -> Data {
+        var d = data
+        while d.first == 0 && d.count > 1 && d[1] < 0x80 { d.removeFirst() }
+        if let first = d.first, first >= 0x80 { d.insert(0, at: 0) }
+        var res = Data([0x02])
+        if d.count < 0x80 { res.append(UInt8(d.count)) }
+        else {
+            let countBytes = withUnsafeBytes(of: UInt32(d.count).bigEndian) { Data($0).drop { $0 == 0 } }
+            res.append(0x80 | UInt8(countBytes.count))
+            res.append(countBytes)
+        }
+        res.append(d)
+        return res
     }
-    guard SecKeyVerifySignature(publicKey, .rsaSignatureMessagePKCS1v15SHA256, signingInput as CFData, signatureData as CFData, &error) else {
+    
+    let pkcs1Data = derEncodeInteger(nData) + derEncodeInteger(eData)
+    var seq = Data([0x30])
+    if pkcs1Data.count < 0x80 { seq.append(UInt8(pkcs1Data.count)) }
+    else {
+        let countBytes = withUnsafeBytes(of: UInt32(pkcs1Data.count).bigEndian) { Data($0).drop { $0 == 0 } }
+        seq.append(0x80 | UInt8(countBytes.count))
+        seq.append(countBytes)
+    }
+    seq.append(pkcs1Data)
+
+    let attr: [String: Any] = [kSecAttrKeyType as String: kSecAttrKeyTypeRSA, kSecAttrKeyClass as String: kSecAttrKeyClassPublic]
+    var error: Unmanaged<CFError>?
+    guard let key = SecKeyCreateWithData(seq as CFData, attr as CFDictionary, &error) else {
+        throw AttestationVerificationError("failed to create public key: \(error?.takeRetainedValue().localizedDescription ?? "unknown")")
+    }
+    guard SecKeyVerifySignature(key, .rsaSignatureMessagePKCS1v15SHA256, signingInput as CFData, signatureData as CFData, &error) else {
         throw AttestationVerificationError("JWT signature verification failed")
     }
-    */
     #endif
     
     // Check claims
