@@ -9,7 +9,7 @@ import CryptoKit
 import Security
 #endif
 
-public struct GatewayAttestation: Sendable {
+public struct GatewayAttestation {
     public var certSha256: String
     public var imageDigest: String
     public var imageReference: String
@@ -120,7 +120,12 @@ public func policyFromTrustRelease(
     trustReleaseUrl: String = TrustedRouterConstants.defaultTrustReleaseURL,
     urlSession: URLSession = .shared
 ) async throws -> AttestationPolicy {
-    let rel = try await release ?? fetchTrustRelease(trustUrl: trustReleaseUrl, urlSession: urlSession)
+    let rel: [String: Any]
+    if let release = release {
+        rel = release
+    } else {
+        rel = try await fetchTrustRelease(trustUrl: trustReleaseUrl, urlSession: urlSession)
+    }
     return AttestationPolicy(
         audience: audience,
         certSha256: certSha256,
@@ -162,7 +167,7 @@ public func verifyGatewayAttestation(
     
     guard let headerData = b64urlDecode(hB64),
           let payloadData = b64urlDecode(pB64),
-          let signature = b64urlDecode(sB64) else {
+          let _ = b64urlDecode(sB64) else {
         throw AttestationVerificationError("invalid JWT encoding")
     }
     
@@ -171,7 +176,7 @@ public func verifyGatewayAttestation(
         throw AttestationVerificationError("invalid JWT JSON payload")
     }
     
-    let signingInput = "\(hB64).\(pB64)".data(using: .utf8)!
+    let _ = "\(hB64).\(pB64)".data(using: .utf8)!
     
     let activeJwks: [String: Any]
     if let jwks = jwks {
