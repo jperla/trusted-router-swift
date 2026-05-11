@@ -63,7 +63,7 @@ extension TrustedRouter {
         body["model"] = model
         body["messages"] = messages
         body["stream"] = true
-        
+
         let bodyData = try JSONSerialization.data(withJSONObject: body)
         let (bytes, response) = try await rawStreamRequest(
             method: "POST",
@@ -72,12 +72,46 @@ extension TrustedRouter {
             body: bodyData,
             options: options
         )
-        
+
         if response.statusCode >= 400 {
-            throw TrustedRouterError.generic(statusCode: response.statusCode, message: "Error in stream response", payload: nil)
+            // Drain the body before throwing so callers see the server's
+            // actual error message instead of a bare status code.
+            throw try await streamingError(bytes: bytes, response: response)
         }
-        
+
         return iterSseEvents(bytes: bytes, type: ChatCompletionChunk.self)
+    }
+
+    /// `[ChatMessage]` overload — encodes the typed messages to the dict
+    /// shape the API expects and forwards to the untyped path.
+    @available(macOS 12.0, iOS 15.0, tvOS 15.0, watchOS 8.0, *)
+    public func chatCompletionsChunks(
+        model: String = TrustedRouterConstants.autoModel,
+        messages: [ChatMessage],
+        options: PerCallOptions = PerCallOptions(),
+        params: [String: Any] = [:]
+    ) async throws -> AsyncThrowingStream<ChatCompletionChunk, Error> {
+        try await chatCompletionsChunks(
+            model: model,
+            messages: try messages.map(messageToDict),
+            options: options,
+            params: params
+        )
+    }
+
+    /// `[ChatMessage]` overload — non-streaming variant.
+    public func chatCompletions(
+        model: String = TrustedRouterConstants.autoModel,
+        messages: [ChatMessage],
+        options: PerCallOptions = PerCallOptions(),
+        params: [String: Any] = [:]
+    ) async throws -> ChatCompletion {
+        try await chatCompletions(
+            model: model,
+            messages: try messages.map(messageToDict),
+            options: options,
+            params: params
+        )
     }
 
     /** Simple helper to yield only the text deltas from a chat completion stream. */
@@ -171,7 +205,7 @@ extension TrustedRouter {
         if let instructions = instructions {
             body["instructions"] = instructions
         }
-        
+
         let bodyData = try JSONSerialization.data(withJSONObject: body)
         let (bytes, response) = try await rawStreamRequest(
             method: "POST",
@@ -180,12 +214,46 @@ extension TrustedRouter {
             body: bodyData,
             options: options
         )
-        
+
         if response.statusCode >= 400 {
-            throw TrustedRouterError.generic(statusCode: response.statusCode, message: "Error in stream response", payload: nil)
+            throw try await streamingError(bytes: bytes, response: response)
         }
-        
+
         return iterSseEvents(bytes: bytes)
+    }
+
+    // MARK: - helpers
+
+    /// Drain `bytes` into a `Data` buffer and classify as a
+    /// `TrustedRouterError` using the same logic as non-streaming requests.
+    /// Used when a stream endpoint returns a 4xx/5xx status before any SSE
+    /// frames are sent — the body usually contains the actual error message.
+    @available(macOS 12.0, iOS 15.0, tvOS 15.0, watchOS 8.0, *)
+    private func streamingError(
+        bytes: URLSession.AsyncBytes,
+        response: HTTPURLResponse
+    ) async throws -> TrustedRouterError {
+        var collected = Data()
+        do {
+            for try await byte in bytes {
+                collected.append(byte)
+                if collected.count > 64 * 1024 { break } // safety cap
+            }
+        } catch {
+            // Body drained as much as we could; classify with what we got.
+        }
+        return classifyErrorPublic(statusCode: response.statusCode, data: collected, response: response)
+    }
+
+    /// Convert a typed `ChatMessage` to the `[String: Any]` form the gateway
+    /// accepts. Round-tripping through JSONEncoder/JSONSerialization keeps
+    /// the snake-case key conversion in one place.
+    private func messageToDict(_ message: ChatMessage) throws -> [String: Any] {
+        let data = try JSONEncoder().encode(message)
+        guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw TrustedRouterError.internalError("could not encode ChatMessage")
+        }
+        return obj
     }
     
     public func responsesInputTokens(

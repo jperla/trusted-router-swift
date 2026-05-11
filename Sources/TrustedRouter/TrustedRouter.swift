@@ -1,7 +1,10 @@
 import Foundation
 
-public struct TrustedRouterConstants {
-    public static let version = "0.3.0"
+/// Compile-time constants for the SDK: version, default endpoints, and the
+/// region → host table used by `regionBaseUrl`. Defaults match what
+/// <https://trustedrouter.com> publishes.
+public enum TrustedRouterConstants {
+    public static let version = "0.4.0"
     public static let defaultAPIBaseURL = "https://api.quillrouter.com/v1"
     public static let defaultTrustReleaseURL = "https://trust.trustedrouter.com/trust/gcp-release.json"
     public static let defaultStatusURL = "https://status.trustedrouter.com/status.json"
@@ -13,6 +16,8 @@ public struct TrustedRouterConstants {
     ]
 }
 
+/// Look up the canonical base URL for a TrustedRouter region. Throws
+/// `internalError` if `region` isn't in the published `regionHosts` table.
 public func regionBaseUrl(region: String) throws -> String {
     guard let host = TrustedRouterConstants.regionHosts[region] else {
         let known = TrustedRouterConstants.regionHosts.keys.sorted().joined(separator: ", ")
@@ -21,6 +26,10 @@ public func regionBaseUrl(region: String) throws -> String {
     return "https://\(host)/v1"
 }
 
+/// Every error the SDK surfaces. Each HTTP-status case carries the original
+/// status code, the server's message (parsed from `error.message` or
+/// `message` if present, otherwise the raw body), and the decoded payload
+/// for callers that need to inspect provider-specific fields.
 public enum TrustedRouterError: Error, LocalizedError, CustomStringConvertible {
     case badRequest(statusCode: Int, message: String, payload: [String: Any]?)
     case authentication(statusCode: Int, message: String, payload: [String: Any]?)
@@ -53,6 +62,11 @@ public enum TrustedRouterError: Error, LocalizedError, CustomStringConvertible {
     }
 }
 
+/// Configuration for a `TrustedRouter` client. Construct with `init(...)`,
+/// passing only the fields you want to override.
+///
+/// Pass either `region` (canonical regional host) or `baseUrl` (explicit
+/// override) — not both. `maxRetries` applies to 429 and ≥500 responses.
 public struct TrustedRouterOptions {
     public var apiKey: String?
     public var baseUrl: String?
@@ -81,6 +95,9 @@ public struct TrustedRouterOptions {
     }
 }
 
+/// Per-call overrides on top of a `TrustedRouter` client's defaults. Useful
+/// for one-off API-key override, custom headers, an idempotency key, or a
+/// short per-request timeout.
 public struct PerCallOptions {
     public var apiKey: String?
     public var extraHeaders: [String: String]?
@@ -103,11 +120,42 @@ public struct PerCallOptions {
     }
 }
 
+/// Strongly-typed chat message. Use this with the `[ChatMessage]` overloads
+/// of `chatCompletions(...)` / `chatCompletionsChunks(...)` when you don't
+/// need to pass tool-call fields. For tool-call interop, fall back to the
+/// `[[String: Any]]` overload.
 public struct ChatMessage: Codable, Sendable {
     public var role: String
     public var content: String?
     public var name: String?
-    // Using AnyCodable or custom decodable for extra stuff would be ideal,
-    // but to keep it simple we can represent tools via dicts if needed.
-    // For pure Swift, we often use AnyCodable.
+    public var toolCallId: String?
+
+    enum CodingKeys: String, CodingKey {
+        case role, content, name
+        case toolCallId = "tool_call_id"
+    }
+
+    public init(role: String, content: String? = nil, name: String? = nil, toolCallId: String? = nil) {
+        self.role = role
+        self.content = content
+        self.name = name
+        self.toolCallId = toolCallId
+    }
+
+    /// Convenience constructor for a plain user message.
+    public static func user(_ content: String) -> ChatMessage {
+        .init(role: "user", content: content)
+    }
+    /// Convenience constructor for a plain assistant message.
+    public static func assistant(_ content: String) -> ChatMessage {
+        .init(role: "assistant", content: content)
+    }
+    /// Convenience constructor for the system prompt.
+    public static func system(_ content: String) -> ChatMessage {
+        .init(role: "system", content: content)
+    }
+    /// Convenience constructor for a tool-result message (Chat Completions style).
+    public static func tool(callId: String, content: String) -> ChatMessage {
+        .init(role: "tool", content: content, toolCallId: callId)
+    }
 }

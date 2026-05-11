@@ -4,6 +4,13 @@ import Foundation
 import FoundationNetworking
 #endif
 
+/// Thin, typed Swift client for the TrustedRouter / Quill Cloud gateway.
+///
+/// Construct once with a `TrustedRouterOptions`, then call any of the
+/// endpoint methods declared in `TrustedRouter+Methods.swift`. All public
+/// methods are `async` and throw `TrustedRouterError` for HTTP failures.
+///
+/// The client is `Sendable` and safe to share across actors.
 public final class TrustedRouter: Sendable {
     public let apiKey: String?
     public let baseUrl: String
@@ -23,12 +30,34 @@ public final class TrustedRouter: Sendable {
         }
 
         self.apiKey = options.apiKey
-        self.baseUrl = computedBaseUrl.replacingOccurrences(of: "/+$", with: "", options: .regularExpression)
+        // Strip any trailing slashes so the path-join in `rawRequest` doesn't
+        // emit a double-slash URL.
+        var trimmed = computedBaseUrl
+        while trimmed.hasSuffix("/") { trimmed.removeLast() }
+        self.baseUrl = trimmed
         self.region = options.region
         self.urlSession = options.urlSession
         self.defaultHeaders = options.headers
         self.maxRetries = max(0, options.maxRetries)
         self.workspaceId = options.workspaceId
+    }
+
+    /// User-Agent string sent on every request. Includes the SDK version
+    /// and the host OS/version so server-side logs can correlate by client.
+    static var userAgent: String {
+        #if os(macOS)
+        let os = "macOS"
+        #elseif os(iOS)
+        let os = "iOS"
+        #elseif os(tvOS)
+        let os = "tvOS"
+        #elseif os(watchOS)
+        let os = "watchOS"
+        #else
+        let os = "Linux"
+        #endif
+        let v = ProcessInfo.processInfo.operatingSystemVersion
+        return "trusted-router-swift/\(TrustedRouterConstants.version) (\(os) \(v.majorVersion).\(v.minorVersion))"
     }
 
     private func buildHeaders(
@@ -38,7 +67,7 @@ public final class TrustedRouter: Sendable {
         apiKey: String? = nil,
         workspaceId: String? = nil
     ) -> [String: String] {
-        var out = ["user-agent": "trusted-router-swift/\(TrustedRouterConstants.version)"]
+        var out = ["user-agent": TrustedRouter.userAgent]
         for (k, v) in self.defaultHeaders { out[k] = v }
         if let headers = headers {
             for (k, v) in headers { out[k] = v }
@@ -74,6 +103,12 @@ public final class TrustedRouter: Sendable {
         let jittered = Double.random(in: 0...baseMs)
         let floor = (retryAfterSeconds ?? 0) * 1000.0
         return UInt64(max(jittered, floor) * 1_000_000)
+    }
+
+    /// Package-internal entry to the error classifier, used by the streaming
+    /// methods when they drain a non-200 SSE response body before throwing.
+    func classifyErrorPublic(statusCode: Int, data: Data?, response: HTTPURLResponse) -> TrustedRouterError {
+        classifyError(statusCode: statusCode, data: data, response: response)
     }
 
     private func classifyError(statusCode: Int, data: Data?, response: HTTPURLResponse) -> TrustedRouterError {

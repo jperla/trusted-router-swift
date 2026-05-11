@@ -9,7 +9,7 @@ This is a pure Swift, zero-dependency client SDK for the Quill Cloud API gateway
 Add this to your `Package.swift` dependencies:
 
 ```swift
-.package(url: "https://github.com/Lore-Hex/trusted-router-swift.git", from: "0.3.0")
+.package(url: "https://github.com/jperla/trusted-router-swift.git", from: "0.4.0")
 ```
 
 Then add `"TrustedRouter"` to your target's dependencies.
@@ -19,21 +19,27 @@ Then add `"TrustedRouter"` to your target's dependencies.
 ```swift
 import TrustedRouter
 
-let client = try TrustedRouter(options: TrustedRouterOptions(
-    apiKey: "your-api-key"
-))
+let client = try TrustedRouter(options: .init(apiKey: "your-api-key"))
 
-// Async/await JSON requests
-let models = try await client.models()
-print(models)
+// Typed catalog calls
+let models = try await client.models()                    // DataList<ModelInfo>
+print(models.data.map(\.id))
 
-// SSE Streaming
-let stream = try await client.chatCompletionsChunks(messages: [
-    ["role": "user", "content": "Hello, world!"]
+// Typed chat with the ChatMessage convenience constructors
+let answer = try await client.chatCompletions(messages: [
+    .system("Reply with one word."),
+    .user("Hello?"),
 ])
+print(answer.choices.first?.message.content ?? "")
 
+// SSE streaming, typed chunks
+let stream = try await client.chatCompletionsChunks(messages: [
+    .user("Tell me a joke."),
+])
 for try await chunk in stream {
-    print(chunk)
+    if let delta = chunk.choices.first?.delta?.content {
+        print(delta, terminator: "")
+    }
 }
 ```
 

@@ -236,44 +236,28 @@ public func verifyGatewayAttestation(
         throw AttestationVerificationError("expected RSA key in JWKS")
     }
     
-    // actual RS256 signature verification
+    // Real RS256 signature verification via Security.framework.
     #if os(macOS) || os(iOS) || os(tvOS) || os(watchOS)
     guard let nB64 = jwk["n"] as? String, let eB64 = jwk["e"] as? String,
           let nData = b64urlDecode(nB64), let eData = b64urlDecode(eB64) else {
         throw AttestationVerificationError("invalid JWK RSA parameters")
     }
-    
-    func derEncodeInteger(_ data: Data) -> Data {
-        var d = data
-        while d.first == 0 && d.count > 1 && d[1] < 0x80 { d.removeFirst() }
-        if let first = d.first, first >= 0x80 { d.insert(0, at: 0) }
-        var res = Data([0x02])
-        if d.count < 0x80 { res.append(UInt8(d.count)) }
-        else {
-            let countBytes = withUnsafeBytes(of: UInt32(d.count).bigEndian) { Data($0).drop { $0 == 0 } }
-            res.append(0x80 | UInt8(countBytes.count))
-            res.append(countBytes)
-        }
-        res.append(d)
-        return res
-    }
-    
-    let pkcs1Data = derEncodeInteger(nData) + derEncodeInteger(eData)
-    var seq = Data([0x30])
-    if pkcs1Data.count < 0x80 { seq.append(UInt8(pkcs1Data.count)) }
-    else {
-        let countBytes = withUnsafeBytes(of: UInt32(pkcs1Data.count).bigEndian) { Data($0).drop { $0 == 0 } }
-        seq.append(0x80 | UInt8(countBytes.count))
-        seq.append(countBytes)
-    }
-    seq.append(pkcs1Data)
-
-    let attr: [String: Any] = [kSecAttrKeyType as String: kSecAttrKeyTypeRSA, kSecAttrKeyClass as String: kSecAttrKeyClassPublic]
+    let pkcs1 = DER.rsaPublicKeyPKCS1(n: nData, e: eData)
+    let attr: [String: Any] = [
+        kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
+        kSecAttrKeyClass as String: kSecAttrKeyClassPublic,
+    ]
     var error: Unmanaged<CFError>?
-    guard let key = SecKeyCreateWithData(seq as CFData, attr as CFDictionary, &error) else {
+    guard let key = SecKeyCreateWithData(pkcs1 as CFData, attr as CFDictionary, &error) else {
         throw AttestationVerificationError("failed to create public key: \(error?.takeRetainedValue().localizedDescription ?? "unknown")")
     }
-    guard SecKeyVerifySignature(key, .rsaSignatureMessagePKCS1v15SHA256, signingInput as CFData, signatureData as CFData, &error) else {
+    guard SecKeyVerifySignature(
+        key,
+        .rsaSignatureMessagePKCS1v15SHA256,
+        signingInput as CFData,
+        signatureData as CFData,
+        &error
+    ) else {
         throw AttestationVerificationError("JWT signature verification failed")
     }
     #endif
