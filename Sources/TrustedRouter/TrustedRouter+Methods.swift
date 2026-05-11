@@ -8,19 +8,19 @@ extension TrustedRouter {
     
     // ---- catalog / metadata ---------------------------------------------
     
-    public func models() async throws -> [String: Any] {
+    public func models() async throws -> DataList<ModelInfo> {
         return try await request(method: "GET", path: "/models")
     }
     
-    public func providers() async throws -> [String: Any] {
+    public func providers() async throws -> DataList<ProviderInfo> {
         return try await request(method: "GET", path: "/providers")
     }
     
-    public func regions() async throws -> [String: Any] {
+    public func regions() async throws -> DataList<RegionInfo> {
         return try await request(method: "GET", path: "/regions")
     }
     
-    public func credits(workspaceId: String? = nil) async throws -> [String: Any] {
+    public func credits(workspaceId: String? = nil) async throws -> CreditsResponse {
         var options = PerCallOptions()
         options.workspaceId = workspaceId
         return try await request(method: "GET", path: "/credits", options: options)
@@ -28,18 +28,28 @@ extension TrustedRouter {
     
     // ---- chat ------------------------------------------------------------
     
+    /**
+     * OpenAI-compatible chat completion. This method collects all chunks from the
+     * gateway (which always streams) and returns a single ChatCompletion object.
+     */
     public func chatCompletions(
         model: String = TrustedRouterConstants.autoModel,
         messages: [[String: Any]],
         options: PerCallOptions = PerCallOptions(),
         params: [String: Any] = [:]
-    ) async throws -> [String: Any] {
-        var body = params
-        body["model"] = model
-        body["messages"] = messages
-        body["stream"] = false
+    ) async throws -> ChatCompletion {
+        let stream: AsyncThrowingStream<ChatCompletionChunk, Error> = try await chatCompletionsChunks(
+            model: model,
+            messages: messages,
+            options: options,
+            params: params
+        )
         
-        return try await request(method: "POST", path: "/chat/completions", body: body, options: options)
+        var chunks: [ChatCompletionChunk] = []
+        for try await chunk in stream {
+            chunks.append(chunk)
+        }
+        return collectCompletion(chunks: chunks)
     }
     
     @available(macOS 12.0, iOS 15.0, tvOS 15.0, watchOS 8.0, *)
@@ -48,7 +58,7 @@ extension TrustedRouter {
         messages: [[String: Any]],
         options: PerCallOptions = PerCallOptions(),
         params: [String: Any] = [:]
-    ) async throws -> AsyncThrowingStream<[String: Any], Error> {
+    ) async throws -> AsyncThrowingStream<ChatCompletionChunk, Error> {
         var body = params
         body["model"] = model
         body["messages"] = messages
@@ -64,11 +74,35 @@ extension TrustedRouter {
         )
         
         if response.statusCode >= 400 {
-            // Need to read the body. For streaming, this is tricky. We'll throw generic error here.
             throw TrustedRouterError.generic(statusCode: response.statusCode, message: "Error in stream response", payload: nil)
         }
         
-        return iterSseEvents(response: response, bytes: bytes)
+        return iterSseEvents(response: response, bytes: bytes, type: ChatCompletionChunk.self)
+    }
+
+    /** Simple helper to yield only the text deltas from a chat completion stream. */
+    @available(macOS 12.0, iOS 15.0, tvOS 15.0, watchOS 8.0, *)
+    public func chatCompletionsText(
+        model: String = TrustedRouterConstants.autoModel,
+        messages: [[String: Any]],
+        options: PerCallOptions = PerCallOptions(),
+        params: [String: Any] = [:]
+    ) async throws -> AsyncThrowingStream<String, Error> {
+        let chunks = try await chatCompletionsChunks(model: model, messages: messages, options: options, params: params)
+        return AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    for try await chunk in chunks {
+                        if let content = chunk.choices.first?.delta?.content, !content.isEmpty {
+                            continuation.yield(content)
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
     }
 
     // ---- other endpoints ---------------------------------------------
@@ -80,7 +114,7 @@ extension TrustedRouter {
         dimensions: Int? = nil,
         user: String? = nil,
         options: PerCallOptions = PerCallOptions()
-    ) async throws -> [String: Any] {
+    ) async throws -> EmbeddingResponse {
         var body: [String: Any] = ["model": model, "input": input]
         if let encodingFormat = encodingFormat { body["encoding_format"] = encodingFormat }
         if let dimensions = dimensions { body["dimensions"] = dimensions }
@@ -95,7 +129,7 @@ extension TrustedRouter {
         maxTokens: Int = 1024,
         options: PerCallOptions = PerCallOptions(),
         params: [String: Any] = [:]
-    ) async throws -> [String: Any] {
+    ) async throws -> MessageResponse {
         var body = params
         body["model"] = model
         body["messages"] = messages
@@ -110,7 +144,7 @@ extension TrustedRouter {
         instructions: String? = nil,
         options: PerCallOptions = PerCallOptions(),
         params: [String: Any] = [:]
-    ) async throws -> [String: Any] {
+    ) async throws -> ResponseObject {
         var body = params
         body["model"] = model
         body["input"] = input
@@ -154,7 +188,27 @@ extension TrustedRouter {
         return iterSseEvents(response: response, bytes: bytes)
     }
     
-    public func broadcastDestinations(workspaceId: String? = nil) async throws -> [String: Any] {
+    public func responsesInputTokens(
+        model: String = TrustedRouterConstants.autoModel,
+        input: Any,
+        instructions: String? = nil,
+        workspaceId: String? = nil,
+        params: [String: Any] = [:]
+    ) async throws -> ResponseInputTokens {
+        var body = params
+        body["model"] = model
+        body["input"] = input
+        body["stream"] = false
+        if let instructions = instructions {
+            body["instructions"] = instructions
+        }
+        
+        var options = PerCallOptions()
+        options.workspaceId = workspaceId
+        return try await request(method: "POST", path: "/responses/input_tokens", body: body, options: options)
+    }
+
+    public func broadcastDestinations(workspaceId: String? = nil) async throws -> DataList<BroadcastDestination> {
         var options = PerCallOptions()
         options.workspaceId = workspaceId
         return try await request(method: "GET", path: "/broadcast/destinations", options: options)
@@ -170,7 +224,7 @@ extension TrustedRouter {
         headers: [String: String]? = nil,
         apiKey: String? = nil,
         workspaceId: String? = nil
-    ) async throws -> [String: Any] {
+    ) async throws -> BroadcastDestination {
         var body: [String: Any] = [
             "type": type,
             "name": name,
@@ -187,25 +241,25 @@ extension TrustedRouter {
         return try await request(method: "POST", path: "/broadcast/destinations", body: body, options: options)
     }
     
-    public func getBroadcastDestination(id: String, workspaceId: String? = nil) async throws -> [String: Any] {
+    public func getBroadcastDestination(id: String, workspaceId: String? = nil) async throws -> BroadcastDestination {
         var options = PerCallOptions()
         options.workspaceId = workspaceId
         return try await request(method: "GET", path: "/broadcast/destinations/\(id)", options: options)
     }
     
-    public func updateBroadcastDestination(id: String, patch: [String: Any], workspaceId: String? = nil) async throws -> [String: Any] {
+    public func updateBroadcastDestination(id: String, patch: [String: Any], workspaceId: String? = nil) async throws -> BroadcastDestination {
         var options = PerCallOptions()
         options.workspaceId = workspaceId
         return try await request(method: "PATCH", path: "/broadcast/destinations/\(id)", body: patch, options: options)
     }
     
-    public func deleteBroadcastDestination(id: String, workspaceId: String? = nil) async throws -> [String: Any] {
+    public func deleteBroadcastDestination(id: String, workspaceId: String? = nil) async throws -> EmptyResponse {
         var options = PerCallOptions()
         options.workspaceId = workspaceId
         return try await request(method: "DELETE", path: "/broadcast/destinations/\(id)", options: options)
     }
     
-    public func testBroadcastDestination(id: String, workspaceId: String? = nil) async throws -> [String: Any] {
+    public func testBroadcastDestination(id: String, workspaceId: String? = nil) async throws -> EmptyResponse {
         var options = PerCallOptions()
         options.workspaceId = workspaceId
         return try await request(method: "POST", path: "/broadcast/destinations/\(id)/test", options: options)
@@ -217,28 +271,27 @@ extension TrustedRouter {
         successUrl: String? = nil,
         cancelUrl: String? = nil,
         options: PerCallOptions = PerCallOptions()
-    ) async throws -> [String: Any] {
+    ) async throws -> CheckoutResponse {
         var body: [String: Any] = ["amount": amount]
         if let paymentMethod = paymentMethod { body["payment_method"] = paymentMethod }
         if let successUrl = successUrl { body["success_url"] = successUrl }
         if let cancelUrl = cancelUrl { body["cancel_url"] = cancelUrl }
         
-        let reqOptions = options
         if body["workspace_id"] == nil && options.workspaceId != nil {
             body["workspace_id"] = options.workspaceId
         }
-        return try await request(method: "POST", path: "/billing/checkout", body: body, options: reqOptions)
+        return try await request(method: "POST", path: "/billing/checkout", body: body, options: options)
     }
     
-    public func authSession() async throws -> [String: Any] {
+    public func authSession() async throws -> AuthSessionResponse {
         return try await request(method: "GET", path: "/auth/session")
     }
     
-    public func logout() async throws -> [String: Any] {
+    public func logout() async throws -> EmptyResponse {
         return try await request(method: "POST", path: "/auth/logout")
     }
     
-    public func activity(params: [String: Any] = [:]) async throws -> [String: Any] {
+    public func activity(params: [String: Any] = [:]) async throws -> ActivityResponse {
         var queryItems: [URLQueryItem] = []
         for (key, value) in params {
             queryItems.append(URLQueryItem(name: key, value: "\(value)"))
@@ -249,5 +302,66 @@ extension TrustedRouter {
         let path = queryStr.isEmpty ? "/activity" : "/activity?\(queryStr)"
         
         return try await request(method: "GET", path: path)
+    }
+
+    public func status(url: String = TrustedRouterConstants.defaultStatusURL) async throws -> [String: Any] {
+        // Return raw dict for status as it's highly dynamic
+        let data: Data = try await request(method: "GET", path: url)
+        if let dict = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            return dict
+        }
+        return [:]
+    }
+
+    /**
+     * Roll a list of ChatCompletionChunk frames into a single ChatCompletion object.
+     * Mirrors the JS/Python collect_completion helpers.
+     */
+    public func collectCompletion(chunks: [ChatCompletionChunk]) -> ChatCompletion {
+        if chunks.isEmpty {
+            return ChatCompletion(
+                id: "",
+                object: "chat.completion",
+                created: nil,
+                model: nil,
+                choices: [
+                    ChatCompletion.Choice(
+                        index: 0,
+                        message: ChatCompletion.Choice.Message(role: "assistant", content: ""),
+                        finishReason: "stop"
+                    )
+                ],
+                usage: nil
+            )
+        }
+        
+        var content = ""
+        var finishReason: String? = nil
+        for chunk in chunks {
+            if let choice = chunk.choices.first {
+                if let deltaContent = choice.delta?.content {
+                    content += deltaContent
+                }
+                if let reason = choice.finishReason {
+                    finishReason = reason
+                }
+            }
+        }
+        
+        let last = chunks.last!
+        return ChatCompletion(
+            id: last.id ?? "",
+            object: "chat.completion",
+            created: last.created,
+            model: last.model,
+            choices: [
+                ChatCompletion.Choice(
+                    index: 0,
+                    message: ChatCompletion.Choice.Message(role: "assistant", content: content),
+                    finishReason: finishReason ?? "stop"
+                )
+            ],
+            usage: nil
+        )
     }
 }

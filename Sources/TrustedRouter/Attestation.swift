@@ -9,7 +9,7 @@ import CryptoKit
 import Security
 #endif
 
-public struct GatewayAttestation {
+public struct GatewayAttestation: @unchecked Sendable {
     public var certSha256: String
     public var imageDigest: String
     public var imageReference: String

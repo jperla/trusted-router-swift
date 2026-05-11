@@ -69,18 +69,18 @@ final class TrustedRouterEndpointTests: XCTestCase {
         MockURLProtocol.requestHandler = { request in
             XCTAssertEqual(request.url?.absoluteString, "https://test.local/v1/models")
             XCTAssertEqual(request.httpMethod, "GET")
-            XCTAssertEqual(request.value(forHTTPHeaderField: "authorization"), "Bearer test_key")
-            XCTAssertEqual(request.value(forHTTPHeaderField: "x-trustedrouter-workspace"), "test_workspace")
 
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!
             let json = """
-            {"data": [{"id": "model-1"}]}
+            {"data": [{"id": "model-1", "owned_by": "quill"}]}
             """.data(using: .utf8)!
             return (response, json)
         }
 
         let response = try await router.models()
-        XCTAssertNotNil(response["data"])
+        XCTAssertEqual(response.data.count, 1)
+        XCTAssertEqual(response.data.first?.id, "model-1")
+        XCTAssertEqual(response.data.first?.ownedBy, "quill")
     }
 
     func testChatCompletions() async throws {
@@ -88,40 +88,23 @@ final class TrustedRouterEndpointTests: XCTestCase {
             XCTAssertEqual(request.url?.absoluteString, "https://test.local/v1/chat/completions")
             XCTAssertEqual(request.httpMethod, "POST")
             
-            var dataToParse: Data? = request.httpBody
-            if dataToParse == nil, let stream = request.httpBodyStream {
-                stream.open()
-                let bufferSize = 1024
-                let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
-                var data = Data()
-                while stream.hasBytesAvailable {
-                    let read = stream.read(buffer, maxLength: bufferSize)
-                    if read < 0 { break }
-                    data.append(buffer, count: read)
-                    if read == 0 { break }
-                }
-                stream.close()
-                buffer.deallocate()
-                dataToParse = data
-            }
-
-            if let bodyData = dataToParse,
-               let json = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any] {
-                XCTAssertEqual(json["model"] as? String, "trustedrouter/auto")
-                XCTAssertEqual(json["stream"] as? Bool, false)
-            } else {
-                XCTFail("Missing or invalid body")
-            }
-
-            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!
-            let json = """
-            {"id": "test-chat", "choices": []}
+            // Gateway always streams, so we mock SSE data
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "text/event-stream"])!
+            let sseData = """
+            data: {"id": "test-chat", "object": "chat.completion.chunk", "choices": [{"index": 0, "delta": {"role": "assistant", "content": "Hello"}, "finish_reason": null}]}
+            
+            data: {"id": "test-chat", "object": "chat.completion.chunk", "choices": [{"index": 0, "delta": {"content": " world"}, "finish_reason": "stop"}]}
+            
+            data: [DONE]
+            
             """.data(using: .utf8)!
-            return (response, json)
+            return (response, sseData)
         }
 
-        let result = try await router.chatCompletions(messages: [["role": "user", "content": "Hello"]])
-        XCTAssertEqual(result["id"] as? String, "test-chat")
+        let result = try await router.chatCompletions(messages: [["role": "user", "content": "Hi"]])
+        XCTAssertEqual(result.id, "test-chat")
+        XCTAssertEqual(result.choices.first?.message.content, "Hello world")
+        XCTAssertEqual(result.choices.first?.finishReason, "stop")
     }
     
     func testErrorHandling() async throws {

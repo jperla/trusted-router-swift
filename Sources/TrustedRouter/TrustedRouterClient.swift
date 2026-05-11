@@ -191,13 +191,13 @@ public final class TrustedRouter: Sendable {
         return (bytes, httpResponse)
     }
 
-    public func request(
+    public func request<T: Decodable>(
         method: String,
         path: String,
         headers: [String: String]? = nil,
         body: Any? = nil,
         options: PerCallOptions = PerCallOptions()
-    ) async throws -> [String: Any] {
+    ) async throws -> T {
         var bodyData: Data? = nil
         if let body = body {
             if let data = body as? Data {
@@ -215,11 +215,20 @@ public final class TrustedRouter: Sendable {
                     if response.statusCode >= 400 {
                         throw classifyError(statusCode: response.statusCode, data: data, response: response)
                     }
-                    if data.isEmpty { return [:] }
-                    guard let dict = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                        throw TrustedRouterError.invalidResponse("Response is not a JSON object")
+                    
+                    if T.self == Data.self {
+                        return data as! T
                     }
-                    return dict
+                    
+                    if data.isEmpty {
+                        // For Void or empty responses, we might need a better way.
+                        // For now we'll try to decode empty JSON.
+                        if let emptyObj = "{}" .data(using: .utf8) {
+                            return try JSONDecoder().decode(T.self, from: emptyObj)
+                        }
+                    }
+
+                    return try JSONDecoder().decode(T.self, from: data)
                 }
                 
                 let retryAfter = parseRetryAfter(response)
