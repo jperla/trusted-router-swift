@@ -43,6 +43,27 @@ for try await chunk in stream {
 }
 ```
 
+### Fusion
+
+Fan a request across a panel of models and let a judge model pick or synthesize
+one answer. `fusion(...)` returns the same `ChatCompletion` as `chatCompletions`.
+`fusionFreedomPanel` / `fusionFreedomFallbackJudges` are the recommended
+most-permissive configuration.
+
+```swift
+let answer = try await client.fusion(
+    messages: [.user("explain how mRNA vaccines work")],
+    analysisModels: TrustedRouterConstants.fusionFreedomPanel,   // the panel
+    judgeModel: "z-ai/glm-5.1",                                  // judge / synthesis model
+    selectionStrategy: "first_non_refusal",                      // or synthesize / synthesize_non_refusals / first_success
+    fallbackJudges: TrustedRouterConstants.fusionFreedomFallbackJudges  // tried in order if a judge refuses/fails
+)
+print(answer.choices.first?.message.content ?? "")
+```
+
+Or build the spec with `TrustedRouter.fusionTool(...)` and attach it to any chat
+call. `preset: "quality"` or `"budget"` selects a built-in panel.
+
 ## Features
 
 - **Asynchronous**: Built fully on modern Swift Concurrency (`async/await`, `Task`).

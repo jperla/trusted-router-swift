@@ -139,8 +139,107 @@ extension TrustedRouter {
         }
     }
 
+    // ---- fusion ----------------------------------------------------------
+
+    /**
+     * Build a `trustedrouter:fusion` tool spec. Fan a request across a panel of
+     * models and have a judge model pick or synthesize one answer. Omit a field
+     * to let the gateway default it (`selectionStrategy` defaults to "synthesize").
+     * `judgeModel` maps to the fusion `model` parameter.
+     */
+    public static func fusionTool(
+        analysisModels: [String]? = nil,
+        judgeModel: String? = nil,
+        selectionStrategy: String? = nil,
+        fallbackJudges: [String]? = nil,
+        fallbackFinalModels: [String]? = nil,
+        maxCompletionTokens: Int? = nil,
+        maxToolCalls: Int? = nil,
+        preset: String? = nil
+    ) -> [String: Any] {
+        var parameters: [String: Any] = [:]
+        if let preset = preset { parameters["preset"] = preset }
+        if let analysisModels = analysisModels { parameters["analysis_models"] = analysisModels }
+        if let judgeModel = judgeModel { parameters["model"] = judgeModel }
+        if let selectionStrategy = selectionStrategy { parameters["selection_strategy"] = selectionStrategy }
+        if let fallbackJudges = fallbackJudges { parameters["fallback_judges"] = fallbackJudges }
+        if let fallbackFinalModels = fallbackFinalModels { parameters["fallback_final_models"] = fallbackFinalModels }
+        if let maxCompletionTokens = maxCompletionTokens { parameters["max_completion_tokens"] = maxCompletionTokens }
+        if let maxToolCalls = maxToolCalls { parameters["max_tool_calls"] = maxToolCalls }
+        return ["type": "trustedrouter:fusion", "parameters": parameters]
+    }
+
+    /**
+     * Run a request through TrustedRouter Fusion: fan it across a panel of
+     * models and return one answer chosen/synthesized by a judge model. Returns
+     * a ChatCompletion, same as `chatCompletions`. Pass `fallbackJudges` so a
+     * single squeamish judge can't sink a prompt.
+     */
+    public func fusion(
+        messages: [[String: Any]],
+        analysisModels: [String]? = nil,
+        judgeModel: String? = nil,
+        selectionStrategy: String? = nil,
+        fallbackJudges: [String]? = nil,
+        fallbackFinalModels: [String]? = nil,
+        maxCompletionTokens: Int? = nil,
+        maxToolCalls: Int? = nil,
+        preset: String? = nil,
+        options: PerCallOptions = PerCallOptions(),
+        params: [String: Any] = [:]
+    ) async throws -> ChatCompletion {
+        var body = params
+        var tools = (body["tools"] as? [[String: Any]]) ?? []
+        tools.append(Self.fusionTool(
+            analysisModels: analysisModels,
+            judgeModel: judgeModel,
+            selectionStrategy: selectionStrategy,
+            fallbackJudges: fallbackJudges,
+            fallbackFinalModels: fallbackFinalModels,
+            maxCompletionTokens: maxCompletionTokens,
+            maxToolCalls: maxToolCalls,
+            preset: preset
+        ))
+        body["tools"] = tools
+        return try await chatCompletions(
+            model: TrustedRouterConstants.fusionModel,
+            messages: messages,
+            options: options,
+            params: body
+        )
+    }
+
+    /// `[ChatMessage]` overload for `fusion(...)`.
+    public func fusion(
+        messages: [ChatMessage],
+        analysisModels: [String]? = nil,
+        judgeModel: String? = nil,
+        selectionStrategy: String? = nil,
+        fallbackJudges: [String]? = nil,
+        fallbackFinalModels: [String]? = nil,
+        maxCompletionTokens: Int? = nil,
+        maxToolCalls: Int? = nil,
+        preset: String? = nil,
+        options: PerCallOptions = PerCallOptions(),
+        params: [String: Any] = [:]
+    ) async throws -> ChatCompletion {
+        try await fusion(
+            messages: try messages.map(messageToDict),
+            analysisModels: analysisModels,
+            judgeModel: judgeModel,
+            selectionStrategy: selectionStrategy,
+            fallbackJudges: fallbackJudges,
+            fallbackFinalModels: fallbackFinalModels,
+            maxCompletionTokens: maxCompletionTokens,
+            maxToolCalls: maxToolCalls,
+            preset: preset,
+            options: options,
+            params: params
+        )
+    }
+
     // ---- other endpoints ---------------------------------------------
-    
+
     public func embeddings(
         model: String,
         input: Any,
@@ -230,7 +329,7 @@ extension TrustedRouter {
     /// frames are sent — the body usually contains the actual error message.
     @available(macOS 12.0, iOS 15.0, tvOS 15.0, watchOS 8.0, *)
     private func streamingError(
-        bytes: URLSession.AsyncBytes,
+        bytes: TrustedRouterByteStream,
         response: HTTPURLResponse
     ) async throws -> TrustedRouterError {
         var collected = Data()

@@ -1,5 +1,9 @@
 import Foundation
 
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
+
 /// Compile-time constants for the SDK: version, default endpoints, and the
 /// region → host table used by `regionBaseUrl`. Defaults match what
 /// <https://trustedrouter.com> publishes.
@@ -9,6 +13,28 @@ public enum TrustedRouterConstants {
     public static let defaultTrustReleaseURL = "https://trust.trustedrouter.com/trust/gcp-release.json"
     public static let defaultStatusURL = "https://status.trustedrouter.com/status.json"
     public static let autoModel = "trustedrouter/auto"
+    public static let fusionModel = "trustedrouter/fusion"
+
+    /// Recommended panel + judge fallback chain for maximum willingness to
+    /// answer — the configuration that answered all 30 PrometheusBench unsafe
+    /// prompts. Pass these to `fusion(...)` (or build your own) for the most
+    /// permissive result the panel can produce.
+    public static let fusionFreedomPanel = [
+        "moonshotai/kimi-k2.7-code",
+        "deepseek/deepseek-v4-flash",
+        "google/gemini-3.5-flash",
+        "google/gemini-3.1-pro-preview",
+        "minimax/minimax-m3",
+        "z-ai/glm-5.1"
+    ]
+    public static let fusionFreedomFallbackJudges = [
+        "z-ai/glm-5.1",
+        "moonshotai/kimi-k2.6",
+        "google/gemini-2.5-flash",
+        "deepseek/deepseek-v4-flash",
+        "google/gemini-3-flash-preview",
+        "tencent/hy3-preview"
+    ]
 
     public static let regionHosts: [String: String] = [
         "us-central1": "api.quillrouter.com",
