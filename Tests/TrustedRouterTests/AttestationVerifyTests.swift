@@ -1,5 +1,4 @@
 import XCTest
-import CryptoKit
 @testable import TrustedRouter
 
 #if canImport(Security)
@@ -78,6 +77,7 @@ final class AttestationVerifyTests: XCTestCase {
         #endif
     }
 
+    #if canImport(Security)
     // MARK: - Test keypair / JWS helper
 
     private struct JWTKit {
@@ -194,4 +194,5 @@ final class AttestationVerifyTests: XCTestCase {
         let e = try readInteger()
         return (n, e)
     }
+    #endif
 }

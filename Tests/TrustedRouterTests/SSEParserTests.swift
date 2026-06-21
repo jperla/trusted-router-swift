@@ -152,14 +152,14 @@ final class SSEParserTests: XCTestCase {
         return events
     }
 
-    private func mockAsyncBytes(chunks: [String]) async throws -> URLSession.AsyncBytes {
+    private func mockAsyncBytes(chunks: [String]) async throws -> TrustedRouterByteStream {
         try await mockAsyncBytes(chunks: chunks.map { Data($0.utf8) })
     }
 
-    private func mockAsyncBytes(chunks: [Data]) async throws -> URLSession.AsyncBytes {
+    private func mockAsyncBytes(chunks: [Data]) async throws -> TrustedRouterByteStream {
         let body = chunks.reduce(Data(), +)
         // Use a self-contained URLProtocol that yields the bytes as a single
-        // response payload. We can't easily fragment AsyncBytes across the
+        // response payload. We can't easily fragment URLSession bytes across the
         // network mock, but the parser is byte-at-a-time so the result is
         // equivalent: it sees one byte at a time regardless.
         MockSSEURLProtocol.body = body
@@ -167,11 +167,16 @@ final class SSEParserTests: XCTestCase {
         config.protocolClasses = [MockSSEURLProtocol.self]
         let session = URLSession(configuration: config)
         let req = URLRequest(url: URL(string: "https://mock.invalid/stream")!)
-        let (bytes, response) = try await session.bytes(for: req)
+        let (data, response) = try await session.data(for: req)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw NSError(domain: "MockSSEURLProtocol", code: 1)
         }
-        return bytes
+        return TrustedRouterByteStream { continuation in
+            for byte in data {
+                continuation.yield(byte)
+            }
+            continuation.finish()
+        }
     }
 }
 

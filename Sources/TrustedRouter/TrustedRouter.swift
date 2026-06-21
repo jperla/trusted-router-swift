@@ -8,7 +8,7 @@ import FoundationNetworking
 /// region → host table used by `regionBaseUrl`. Defaults match what
 /// <https://trustedrouter.com> publishes.
 public enum TrustedRouterConstants {
-    public static let version = "0.4.0"
+    public static let version = "0.4.1"
     public static let defaultAPIBaseURL = "https://api.quillrouter.com/v1"
     public static let defaultTrustReleaseURL = "https://trust.trustedrouter.com/trust/gcp-release.json"
     public static let defaultStatusURL = "https://status.trustedrouter.com/status.json"

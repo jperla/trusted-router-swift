@@ -190,7 +190,7 @@ public final class TrustedRouter: Sendable {
         headers: [String: String]? = nil,
         body: Data? = nil,
         options: PerCallOptions = PerCallOptions()
-    ) async throws -> (URLSession.AsyncBytes, HTTPURLResponse) {
+    ) async throws -> (TrustedRouterByteStream, HTTPURLResponse) {
         let urlString = "\(baseUrl)/\(path.replacingOccurrences(of: "^/+", with: "", options: .regularExpression))"
         guard let url = URL(string: urlString) else {
             throw TrustedRouterError.internalError("Invalid URL: \(urlString)")
@@ -219,12 +219,47 @@ public final class TrustedRouter: Sendable {
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
 
+        #if os(Linux)
+        let (data, response) = try await urlSession.data(for: req)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw TrustedRouterError.internalError("Non-HTTP response")
+        }
+        return (Self.byteStream(from: data), httpResponse)
+        #else
         let (bytes, response) = try await urlSession.bytes(for: req)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw TrustedRouterError.internalError("Non-HTTP response")
         }
-        return (bytes, httpResponse)
+        return (Self.byteStream(from: bytes), httpResponse)
+        #endif
     }
+
+    private static func byteStream(from data: Data) -> TrustedRouterByteStream {
+        TrustedRouterByteStream { continuation in
+            for byte in data {
+                continuation.yield(byte)
+            }
+            continuation.finish()
+        }
+    }
+
+    #if !os(Linux)
+    @available(macOS 12.0, iOS 15.0, tvOS 15.0, watchOS 8.0, *)
+    private static func byteStream(from bytes: URLSession.AsyncBytes) -> TrustedRouterByteStream {
+        TrustedRouterByteStream { continuation in
+            Task {
+                do {
+                    for try await byte in bytes {
+                        continuation.yield(byte)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
+    #endif
 
     public func request<T: Decodable>(
         method: String,

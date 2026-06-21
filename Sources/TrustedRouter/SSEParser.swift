@@ -9,11 +9,13 @@ public struct SSEEvent: Sendable {
     public var data: String
 }
 
+public typealias TrustedRouterByteStream = AsyncThrowingStream<UInt8, Error>
+
 @available(macOS 12.0, iOS 15.0, tvOS 15.0, watchOS 8.0, *)
 public enum SSEParser {
     
-    /// Low-level stream of raw SSE events from AsyncBytes.
-    public static func stream(from bytes: URLSession.AsyncBytes) -> AsyncThrowingStream<SSEEvent, Error> {
+    /// Low-level stream of raw SSE events from bytes.
+    public static func stream(from bytes: TrustedRouterByteStream) -> AsyncThrowingStream<SSEEvent, Error> {
         return AsyncThrowingStream { continuation in
             Task {
                 do {
@@ -72,7 +74,7 @@ public enum SSEParser {
 }
 
 @available(macOS 12.0, iOS 15.0, tvOS 15.0, watchOS 8.0, *)
-public func iterSseEvents<T: Decodable>(bytes: URLSession.AsyncBytes, type: T.Type) -> AsyncThrowingStream<T, Error> {
+public func iterSseEvents<T: Decodable>(bytes: TrustedRouterByteStream, type: T.Type) -> AsyncThrowingStream<T, Error> {
     let decoder = JSONDecoder()
     let rawStream = SSEParser.stream(from: bytes)
     
@@ -99,7 +101,7 @@ public func iterSseEvents<T: Decodable>(bytes: URLSession.AsyncBytes, type: T.Ty
 }
 
 @available(macOS 12.0, iOS 15.0, tvOS 15.0, watchOS 8.0, *)
-public func iterSseEvents(bytes: URLSession.AsyncBytes) -> AsyncThrowingStream<[String: Any], Error> {
+public func iterSseEvents(bytes: TrustedRouterByteStream) -> AsyncThrowingStream<[String: Any], Error> {
     let rawStream = SSEParser.stream(from: bytes)
     
     return AsyncThrowingStream { continuation in

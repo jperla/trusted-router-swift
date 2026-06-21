@@ -9,7 +9,7 @@ This is a pure Swift, zero-dependency client SDK for the Quill Cloud API gateway
 Add this to your `Package.swift` dependencies:
 
 ```swift
-.package(url: "https://github.com/jperla/trusted-router-swift.git", from: "0.4.0")
+.package(url: "https://github.com/jperla/trusted-router-swift.git", from: "0.4.1")
 ```
 
 Then add `"TrustedRouter"` to your target's dependencies.
@@ -67,9 +67,9 @@ call. `preset: "quality"` or `"budget"` selects a built-in panel.
 ## Features
 
 - **Asynchronous**: Built fully on modern Swift Concurrency (`async/await`, `Task`).
-- **Streaming**: Native parsing of SSE using `AsyncThrowingStream` and `URLSession.AsyncBytes`.
+- **Streaming**: Native parsing of SSE using `AsyncThrowingStream`, with `URLSession.AsyncBytes` on Apple platforms and a Linux-safe byte stream fallback.
 - **Attestation Verification**: Verifies the Confidential Space JWT using `CryptoKit`/`Security`.
-- **Pure Swift**: No 3rd party dependencies. Operates seamlessly on macOS, iOS, tvOS, watchOS, and Linux (with `swift-crypto` and `FoundationNetworking`).
+- **Pure Swift**: No 3rd party dependencies. Operates seamlessly on macOS, iOS, tvOS, watchOS, and Linux with `FoundationNetworking`.
 - **Retries**: Implements transparent exponential backoff on `429` and `5xx` errors.
 
 ## Sign in with TrustedRouter
